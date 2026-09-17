@@ -88,5 +88,10 @@ func (m *Model) editLine() int {
 			return r.Right.Num
 		}
 	}
+	if file >= 0 && file < len(m.files) {
+		if hunkIdx := m.view.Rows[m.cur].HunkIdx; hunkIdx >= 0 && hunkIdx < len(m.files[file].Hunks) {
+			return m.files[file].Hunks[hunkIdx].NewStart
+		}
+	}
 	return 1
 }

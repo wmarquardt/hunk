@@ -52,6 +52,17 @@ func TestEditLineFollowsTheCursor(t *testing.T) {
 	if got, want := m.editLine(), m.files[0].Hunks[0].NewStart; got != want {
 		t.Errorf("on the file header: line %d, want %d", got, want)
 	}
+
+	// Removed lines at the end of a file fall back to the hunk's NewStart.
+	mEof, _ := gitModelOpts(t,
+		map[string]string{"b.txt": lines(20)},
+		map[string]string{"b.txt": lines(15)},
+		Options{Unified: true},
+	)
+	mEof.moveTo(rowWhere(mEof, 0, func(r Row) bool { return r.Left.Kind == diff.Removed }))
+	if got, want := mEof.editLine(), mEof.files[0].Hunks[0].NewStart; got != want {
+		t.Errorf("on removed lines at EOF: line %d, want %d", got, want)
+	}
 }
 
 func TestEditorCmdPassesEditorSpecificLineArgumentsThroughTheShell(t *testing.T) {
