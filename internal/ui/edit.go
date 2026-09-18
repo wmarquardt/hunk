@@ -129,5 +129,5 @@ func (m *Model) editLine() int {
 			return r.Right.Num
 		}
 	}
-	return 1
+	return m.files[file].Hunks[m.view.Rows[m.cur].HunkIdx].NewStart
 }
