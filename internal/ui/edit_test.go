@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/wmarquardt/hunk/internal/diff"
 	"github.com/wmarquardt/hunk/internal/theme"
 )
@@ -261,5 +263,44 @@ func TestEditorDoneReloadsAndKeepsPlace(t *testing.T) {
 	m.Update(editorDoneMsg{editor: "vim", path: "a.txt", elapsed: time.Second})
 	if !strings.Contains(m.toastText, "reloaded a.txt") {
 		t.Errorf("toast = %q, want successful reload confirmation", m.toastText)
+	}
+}
+
+func TestEditorDoneArmsMarqueeWhenNameOverflows(t *testing.T) {
+	const path = "a_really_quite_long_file_name_indeed.go"
+	m, repo := gitModel(t, map[string]string{path: "old\n"}, map[string]string{path: "new\n"})
+	m.sideWidth = SidebarWidthMin
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 10})
+	m = updated.(*Model)
+	m.marqueeArmed = false
+	writeWorking(t, repo.Dir, path, "newer\n")
+	updated, cmd := m.Update(editorDoneMsg{})
+	m = updated.(*Model)
+	if !m.marqueeArmed {
+		t.Fatal("editor return did not arm the marquee for a truncated name")
+	}
+	if cmd == nil {
+		t.Fatal("editor return produced no marquee tick")
+	}
+}
+
+func TestFsDirtyArmsMarqueeWhenNameOverflows(t *testing.T) {
+	const path = "a_really_quite_long_file_name_indeed.go"
+	m, repo := gitModel(t, map[string]string{path: "old\n"}, map[string]string{path: "new\n"})
+	m.sideWidth = SidebarWidthMin
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 10})
+	m = updated.(*Model)
+	if !m.live || m.watch == nil {
+		t.Fatal("git model should be live-following")
+	}
+	m.marqueeArmed = false
+	writeWorking(t, repo.Dir, path, "newer\n")
+	updated, cmd := m.Update(fsDirtyMsg{})
+	m = updated.(*Model)
+	if cmd == nil {
+		t.Fatal("fsDirty returned no command")
+	}
+	if !m.marqueeArmed {
+		t.Fatal("live-follow reload did not arm the marquee for a truncated name")
 	}
 }

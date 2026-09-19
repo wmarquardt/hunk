@@ -152,12 +152,98 @@ func TestTreeFillsTheScreenExactly(t *testing.T) {
 }
 
 func TestTreeTruncatesNamesButKeepsCounts(t *testing.T) {
+	m := newTestModel(t, treeDiff(
+		"a_really_quite_long_file_name_indeed.go",
+		"second_also_quite_long_file_name.go",
+	))
+	m.sideWidth = SidebarWidthMin
+	lines := screen(t, m, 120, 6)
+	sel := ansi.Cut(lines[0], 0, SidebarWidthMin)
+	other := ansi.Cut(lines[1], 0, SidebarWidthMin)
+	if strings.Contains(sel, "…") {
+		t.Errorf("selected row = %q, want a window not an ellipsis", sel)
+	}
+	if !strings.HasSuffix(strings.TrimRight(sel, " "), "+1 -1") {
+		t.Errorf("selected row = %q, want counts flush right", sel)
+	}
+	if !strings.Contains(other, "…") || !strings.Contains(other, "+1 -1") {
+		t.Errorf("unselected row = %q, want a clipped name and its counts", other)
+	}
+}
+
+func TestSelectedTreeNameMarqueeKeepsCounts(t *testing.T) {
+	const path = "a_really_quite_long_file_name_indeed.go"
+	m := newTestModel(t, treeDiff(path))
+	m.sideWidth = SidebarWidthMin
+	frame0 := ansi.Cut(screen(t, m, 120, 5)[0], 0, SidebarWidthMin)
+	m.marqueeFrames["file:"+path] = marqueeHold + 8
+	side := ansi.Cut(screen(t, m, 120, 5)[0], 0, SidebarWidthMin)
+	if !strings.HasSuffix(strings.TrimRight(side, " "), "+1 -1") {
+		t.Errorf("scrolled selected row = %q, want counts flush right", side)
+	}
+	if ansi.StringWidth(side) != SidebarWidthMin {
+		t.Errorf("scrolled selected row width %d, want %d", ansi.StringWidth(side), SidebarWidthMin)
+	}
+	if strings.Contains(side, "…") {
+		t.Errorf("scrolled selected row = %q, want a window not an ellipsis", side)
+	}
+	if side == frame0 {
+		t.Errorf("scrolled selected row still %q; mid-scroll should move the name", side)
+	}
+}
+
+func TestClipOrMarqueeKeepsIndependentFrames(t *testing.T) {
+	m := &Model{}
+	const w = 8
+	a := "abcdefghijklmnopqrstuvwxyz0123456789ABCD"
+	b := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
+	m.clipOrMarquee("commit:1", a, w, true)
+	m.marqueeFrames["commit:1"] = 19
+	gotA := m.clipOrMarquee("commit:1", a, w, true)
+	gotB := m.clipOrMarquee("file:2", b, w, true)
+	if m.marqueeFrames["commit:1"] != 19 {
+		t.Fatalf("commit frame reset to %d after drawing the file", m.marqueeFrames["commit:1"])
+	}
+	if gotB != marquee(b, w, 0) {
+		t.Fatalf("new file started at %q, want frame 0", gotB)
+	}
+	if gotA != marquee(a, w, 19) {
+		t.Fatalf("commit window %q, want frame 19", gotA)
+	}
+	for range 20 {
+		m.clipOrMarquee("commit:1", a, w, true)
+		m.clipOrMarquee("file:2", b, w, true)
+		m.marqueeFrames["commit:1"]++
+		m.marqueeFrames["file:2"]++
+	}
+	winA := m.clipOrMarquee("commit:1", a, w, true)
+	winB := m.clipOrMarquee("file:2", b, w, true)
+	if winA == marquee(a, w, 0) {
+		t.Fatal("commit still at frame 0 after interleaved ticks")
+	}
+	if winB == marquee(b, w, 0) {
+		t.Fatal("file still at frame 0 after interleaved ticks")
+	}
+}
+
+func TestStartMarqueeSkipsWhenNothingOverflows(t *testing.T) {
+	m := newTestModel(t, treeDiff("a.go"))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 10})
+	m = updated.(*Model)
+	m.marqueeArmed = false
+	if cmd := m.startMarquee(); cmd != nil {
+		t.Fatal("ticked a sidebar whose names all fit")
+	}
+}
+
+func TestStartMarqueeArmsWhenSelectedNameOverflows(t *testing.T) {
 	m := newTestModel(t, treeDiff("a_really_quite_long_file_name_indeed.go"))
 	m.sideWidth = SidebarWidthMin
-	line := screen(t, m, 120, 5)[0]
-	side := ansi.Cut(line, 0, SidebarWidthMin)
-	if !strings.Contains(side, "…") || !strings.Contains(side, "+1 -1") {
-		t.Errorf("sidebar row = %q, want a clipped name and its counts", side)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 10})
+	m = updated.(*Model)
+	m.marqueeArmed = false
+	if cmd := m.startMarquee(); cmd == nil {
+		t.Fatal("did not tick a truncated selected name")
 	}
 }
 
@@ -513,5 +599,50 @@ func TestFoldingADirectory(t *testing.T) {
 	m.command("-")
 	if len(names()) != 4 {
 		t.Errorf("- in the diff changed the tree: %v", names())
+	}
+}
+
+func TestSelectedNameOverflowsAgreesWithPaint(t *testing.T) {
+	long := newTestModel(t, treeDiff("a_really_quite_long_file_name_indeed.go"))
+	long.sideWidth = SidebarWidthMin
+	screen(t, long, 120, 10)
+	if !long.marqueeOverflow {
+		t.Fatal("paint did not record an overflowing selected name")
+	}
+	if !long.selectedNameOverflows() {
+		t.Fatal("compute disagrees with paint on an overflowing name")
+	}
+
+	short := newTestModel(t, treeDiff("a.go"))
+	screen(t, short, 120, 10)
+	if short.marqueeOverflow || short.selectedNameOverflows() {
+		t.Fatal("a name that fits should not overflow")
+	}
+}
+
+func TestMarqueeTickReusesPaintOverflow(t *testing.T) {
+	m := newTestModel(t, treeDiff("a_really_quite_long_file_name_indeed.go"))
+	m.sideWidth = SidebarWidthMin
+	screen(t, m, 120, 10)
+	m.files = nil // compute would now say nothing overflows
+	m.marqueeArmed = false
+	if cmd := m.startMarqueeFromPaint(); cmd == nil {
+		t.Fatal("tick path required a tree rebuild")
+	}
+	m.marqueeArmed = false
+	if cmd := m.startMarquee(); cmd != nil {
+		t.Fatal("compute path should see no files")
+	}
+}
+
+func TestCommitSubjectWidthSharedWithCommitLine(t *testing.T) {
+	m, _ := logModel(t)
+	m.sideWidth = SidebarWidthMin
+	screen(t, m, 120, 16)
+	c := m.commit()
+	w := m.sidebarW()
+	room := commitSubjectWidth(w, c.Short)
+	if room != w-ansi.StringWidth(c.Short)-3 {
+		t.Fatalf("commitSubjectWidth = %d, want %d", room, w-ansi.StringWidth(c.Short)-3)
 	}
 }

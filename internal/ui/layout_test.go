@@ -3,6 +3,8 @@ package ui
 import (
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/wmarquardt/hunk/internal/diff"
 )
 
@@ -344,5 +346,56 @@ func TestWrapBlocksMarksEnclosedRows(t *testing.T) {
 		if boxed := r.BoxLeft == BoxMid; boxed != changed {
 			t.Errorf("row %q/%q is enclosed=%v, want %v", r.Left.Text, r.Right.Text, boxed, changed)
 		}
+	}
+}
+
+func TestMarquee(t *testing.T) {
+	const s = "abcdefghij" // 10 columns
+	const w = 4
+	maxOff := ansi.StringWidth(s) - w // 6
+	cycle := 2*marqueeHold + maxOff
+
+	if got := marquee("abc", 8, 99); got != "abc" {
+		t.Errorf("fitting name = %q, want unchanged on every frame", got)
+	}
+	start := marquee(s, w, 0)
+	if start != "abcd" {
+		t.Fatalf("frame 0 = %q, want abcd", start)
+	}
+	for i := 1; i < marqueeHold; i++ {
+		if got := marquee(s, w, i); got != start {
+			t.Fatalf("hold-start frame %d = %q, want %q", i, got, start)
+		}
+	}
+	lastScroll := marqueeHold + maxOff - 1
+	end := marquee(s, w, lastScroll)
+	if end != "ghij" {
+		t.Fatalf("last scroll frame = %q, want ghij", end)
+	}
+	if ansi.StringWidth(end) != w {
+		t.Fatalf("last scroll width %d, want %d", ansi.StringWidth(end), w)
+	}
+	for i := lastScroll + 1; i < cycle; i++ {
+		if got := marquee(s, w, i); got != end {
+			t.Fatalf("hold-end frame %d = %q, want %q", i, got, end)
+		}
+	}
+	if got := marquee(s, w, cycle); got != start {
+		t.Fatalf("wrap frame %d = %q, want %q", cycle, got, start)
+	}
+
+	wide := "日本語ファイル"
+	win := marquee(wide, 4, 0)
+	if ansi.StringWidth(win) > 4 {
+		t.Fatalf("CJK frame 0 width %d > 4: %q", ansi.StringWidth(win), win)
+	}
+	last := marquee(wide, 4, marqueeHold+ansi.StringWidth(wide)-4-1)
+	if ansi.StringWidth(last) > 4 {
+		t.Fatalf("CJK last-scroll width %d > 4: %q", ansi.StringWidth(last), last)
+	}
+	// The last scroll window is the tail: cutting from maxOff must not clip
+	// the end of the name.
+	if got := ansi.StringWidth(wide) - ansi.StringWidth(last); got < 0 {
+		t.Fatalf("CJK last-scroll %q is wider than the name", last)
 	}
 }

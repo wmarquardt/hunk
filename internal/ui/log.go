@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -141,7 +142,9 @@ func (m *Model) commitLine(idx, w int) string {
 	if idx == m.commitIdx {
 		style = m.st.sidebarSel
 	}
-	label := fmt.Sprintf(" %s  %s", c.Short, clip(c.Subject, w-lipgloss.Width(c.Short)-3))
+	subjW := commitSubjectWidth(w, c.Short)
+	subj := m.clipOrMarquee("commit:"+c.SHA, c.Subject, subjW, idx == m.commitIdx)
+	label := fmt.Sprintf(" %s  %s", c.Short, subj)
 	return fit(style.Render(label), 0, w, style)
 }
 
@@ -163,3 +166,127 @@ func (m *Model) sidebarHeader(label string, w int, focused bool) string {
 // clip shortens text from the right, which is where a commit subject or a
 // file name in the tree gets less informative.
 func clip(s string, w int) string { return ansi.Truncate(s, w, "…") }
+
+// marqueeHold is how many frames the selected name sits still at each end
+// (~2s at marqueeStep). marqueeStep is one column of scroll.
+const (
+	marqueeHold = 11
+	marqueeStep = 180 * time.Millisecond
+)
+
+// marqueeTickMsg is one frame of the selected-row name scroll.
+type marqueeTickMsg struct{}
+
+// marquee returns the window of s visible at frame, for a name that does not
+// fit in w columns. A name that fits is unchanged on every frame. Hold frames
+// at each end show the same window; the last scroll frame shows the end of the
+// name; wrapping returns to frame 0's output.
+func marquee(s string, w, frame int) string {
+	if w <= 0 {
+		return ""
+	}
+	sw := ansi.StringWidth(s)
+	if sw <= w {
+		return s
+	}
+	maxOff := sw - w
+	cycle := 2*marqueeHold + maxOff
+	if frame < 0 {
+		frame = 0
+	}
+	f := frame % cycle
+	var off int
+	switch {
+	case f < marqueeHold:
+		off = 0
+	case f < marqueeHold+maxOff:
+		off = f - marqueeHold + 1
+	default:
+		off = maxOff
+	}
+	return ansi.Cut(s, off, off+w)
+}
+
+// clipOrMarquee clips an unselected name with an ellipsis, and scrolls a
+// selected name that does not fit. Each key keeps its own frame so a commit
+// subject and a file name in log mode can both move. A key that was not drawn
+// this render is dropped, so selecting it again starts at the beginning.
+func (m *Model) clipOrMarquee(key, s string, w int, sel bool) string {
+	if !sel {
+		return clip(s, w)
+	}
+	if m.marqueeFrames == nil {
+		m.marqueeFrames = map[string]int{}
+	}
+	if m.marqueeSeen == nil {
+		m.marqueeSeen = map[string]bool{}
+	}
+	m.marqueeSeen[key] = true
+	if _, ok := m.marqueeFrames[key]; !ok {
+		m.marqueeFrames[key] = 0
+	}
+	if w > 0 && ansi.StringWidth(s) > w {
+		m.marqueeOverflow = true
+	}
+	return marquee(s, w, m.marqueeFrames[key])
+}
+
+func (m *Model) pruneMarquee() {
+	for k := range m.marqueeFrames {
+		if !m.marqueeSeen[k] {
+			delete(m.marqueeFrames, k)
+		}
+	}
+	clear(m.marqueeSeen)
+}
+
+// commitSubjectWidth is the columns a commit subject may occupy in a sidebar
+// of width w. commitLine and the overflow check share it so a later layout
+// change cannot leave them computing different rooms.
+func commitSubjectWidth(w int, short string) int {
+	return w - lipgloss.Width(short) - 3
+}
+
+// treeNameRoom is the columns a tree row's name may occupy in a sidebar of
+// width w. treeRow and the overflow check share it so the clock and the
+// rendered width cannot drift.
+func (m *Model) treeNameRoom(l treeLine, w int) int {
+	if l.file < 0 {
+		return w - lipgloss.Width(" "+l.prefix+"/")
+	}
+	f := m.files[l.file]
+	adds := fmt.Sprintf("+%d", f.Added)
+	dels := fmt.Sprintf(" -%d", f.Removed)
+	lead := " " + l.prefix
+	if m.staging() {
+		symbol, _ := m.fileGlyph(l.file, f, m.st.sidebar)
+		lead += symbol + " "
+	}
+	return max(w-lipgloss.Width(lead)-lipgloss.Width(adds+dels)-2, 1)
+}
+
+// selectedNameOverflows reports whether a selected sidebar row's name does not
+// fit, the only case that needs the marquee clock. Keys and resizes use this
+// before the next paint; ticks reuse marqueeOverflow from the last paint.
+func (m *Model) selectedNameOverflows() bool {
+	if !m.sidebar() {
+		return false
+	}
+	w := m.sidebarW()
+	if m.logMode && len(m.commits) > 0 {
+		c := m.commit()
+		if ansi.StringWidth(c.Subject) > commitSubjectWidth(w, c.Short) {
+			return true
+		}
+	}
+	tree := buildTree(m.files, m.collapsed)
+	sel := m.treeSel(tree)
+	if sel < 0 || sel >= len(tree) {
+		return false
+	}
+	return m.treeNameOverflows(tree[sel], w)
+}
+
+func (m *Model) treeNameOverflows(l treeLine, w int) bool {
+	return ansi.StringWidth(l.name) > m.treeNameRoom(l, w)
+}

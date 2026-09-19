@@ -130,7 +130,10 @@ Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.
 
 The sidebar is the changed files as a directory tree, directories first then
-files, each group alphabetical — the same order `]` / `[` walk. `ctrl+w` moves focus to it (its rule lights up),
+files, each group alphabetical — the same order `]` / `[` walk. A selected
+name that does not fit the row scrolls slowly like a marquee (a pause at
+each end, one column at a time); every other truncated name still ends in
+an ellipsis. `ctrl+w` moves focus to it (its rule lights up),
 after which `j` / `k` and ↑ / ↓ move line by line, folders included; every other
 key still works on the diff, and `ctrl+w` again or a click in the diff hands
 focus back. A folder under the cursor gets a muted bar instead of the accent —
@@ -151,7 +154,8 @@ stays on screen with its check instead of vanishing mid-review.
 
 `hunk log` is `git log -p` you can walk around in. The sidebar splits in two —
 the commits on top, the files of the selected commit below — so the keys nest
-the way the history does:
+the way the history does. The selected commit subject and the selected file
+name scroll the same way they do in review mode when they do not fit:
 
 | Key | Action |
 |---|---|
