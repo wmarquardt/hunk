@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wmarquardt/hunk/internal/diff"
+	"github.com/wmarquardt/hunk/internal/theme"
 )
 
 // rowWhere is the first row after from that satisfies ok, or -1.
@@ -63,6 +64,21 @@ func TestEditLineFollowsTheCursor(t *testing.T) {
 	m.moveTo(rowWhere(m, 0, func(r Row) bool { return r.Left.Num == 41 && r.Left.Kind == diff.Removed }))
 	if got, want := m.editLine(), m.files[0].Hunks[0].NewStart; got != want {
 		t.Errorf("on removed lines at end of file: line %d, want hunk start %d", got, want)
+	}
+}
+
+func TestEditLineUsesSafeFallbackForHunklessFiles(t *testing.T) {
+	files := []diff.File{
+		{OldPath: "old.txt", NewPath: "new.txt", IsRename: true},
+		{OldPath: "image.png", NewPath: "image.png", IsBinary: true},
+	}
+	m := New(files, theme.Default(), Options{})
+
+	for _, fileRow := range m.view.FileRows {
+		m.moveTo(fileRow)
+		if got := m.editLine(); got != 1 {
+			t.Errorf("on %s: line %d, want safe fallback 1", files[m.currentFile()].Path(), got)
+		}
 	}
 }
 

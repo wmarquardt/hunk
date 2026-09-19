@@ -115,12 +115,11 @@ func editorDoneToast(msg editorDoneMsg) string {
 
 // editLine is the line of the new file the cursor points at. A removed line
 // has no place in the new file, so it opens at the next line that does: where
-// the change lands. A header opens at its first hunk the same way.
-//
-// ponytail: removed lines at the very end of a file, with nothing after them,
-// open at line 1; fall back to the hunk's NewStart if that ever bothers anyone.
+// the change lands. A header opens at its first hunk the same way. Files with
+// no hunks use line 1 as a safe editor fallback.
 func (m *Model) editLine() int {
-	file := m.view.Rows[m.cur].FileIdx
+	row := m.view.Rows[m.cur]
+	file := row.FileIdx
 	for _, r := range m.view.Rows[m.cur:] {
 		if r.FileIdx != file {
 			break
@@ -129,5 +128,8 @@ func (m *Model) editLine() int {
 			return r.Right.Num
 		}
 	}
-	return m.files[file].Hunks[m.view.Rows[m.cur].HunkIdx].NewStart
+	if row.HunkIdx < 0 || len(m.files[file].Hunks) == 0 {
+		return 1
+	}
+	return m.files[file].Hunks[row.HunkIdx].NewStart
 }
